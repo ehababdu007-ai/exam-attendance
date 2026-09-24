@@ -19,7 +19,7 @@ dependencies:
   intl: ^0.18.1
   vibration: ^1.8.4
   provider: ^6.1.2
-
+  share_plus: ^9.0.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
