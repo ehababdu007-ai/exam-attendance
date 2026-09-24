@@ -24,12 +24,12 @@ jobs:
           flutter-version: '3.19.x'
           channel: 'stable'
 
-      - name: Recreate Flutter Android Structure
+      - name: Recreate Clean Android Structure
         run: |
-          mkdir temp_app
-          cd temp_app
-          flutter create . --org com.exam.attendance
+          flutter create exam_attendance --org com.exam.attendance --project-name exam_attendance
+          cd exam_attendance
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
+          sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
           cp -r ../lib .
           cp ../pubspec.yaml .
           flutter pub get
@@ -39,5 +39,5 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-release
+          name: exam-attendance-app
           path: app-release.apk
