@@ -30,14 +30,15 @@ jobs:
           cd exam_attendance
           sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
           sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
+          sed -i 's/android:label="exam_attendance"/android:label="حضور الامتحانات"/' android/app/src/main/AndroidManifest.xml
           cp -r ../lib .
           cp ../pubspec.yaml .
           flutter pub get
           flutter build apk --release
-          cp build/app/outputs/flutter-apk/app-release.apk ../app-release.apk
+          cp build/app/outputs/flutter-apk/app-release.apk ../exam-attendance.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: exam-attendance-app
-          path: app-release.apk
+          path: exam-attendance.apk
