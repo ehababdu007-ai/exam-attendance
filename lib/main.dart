@@ -1,20 +1,20 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
-import 'package:vibration/vibration.dart';
-import 'package:intl/intl.dart';
-import 'package:excel/excel.dart' hide Row;
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:excel/excel.dart' as excel_lib;
 import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:intl/intl.dart';
+import 'package:vibration/vibration.dart';
+import 'package:share_plus/share_plus.dart';
 
 void main() {
   runApp(
     ChangeNotifierProvider(
-      create: (_) => ExamController(),
-      child: const MaterialApp(
-        debugShowCheckedModeBanner: false,
-        home: HomeScreen(),
-      ),
+      create: (_) => AttendanceProvider(),
+      child: const ExamAttendanceApp(),
     ),
   );
 }
@@ -24,218 +24,277 @@ class Student {
   final String name;
   final String grade;
   final String group;
+  bool isPresent;
+  String? attendanceTime;
 
-  Student({required this.code, required this.name, required this.grade, required this.group});
+  Student({
+    required this.code,
+    required this.name,
+    required this.grade,
+    required this.group,
+    this.isPresent = false,
+    this.attendanceTime,
+  });
 }
 
-class AttendanceRecord {
-  final String studentCode;
-  final String timestamp;
-  bool isRevoked;
+class AttendanceProvider extends ChangeNotifier {
+  List<Student> _students = [];
+  List<Student> get students => _students;
 
-  AttendanceRecord({required this.studentCode, required this.timestamp, this.isRevoked = false});
-}
+  int get totalCount => _students.length;
+  int get presentCount => _students.where((s) => s.isPresent).length;
 
-enum ScanResultType { success, duplicate, notFound }
-
-class ScanFeedback {
-  final ScanResultType type;
-  final String message;
-  final Student? student;
-  final String? extraInfo;
-
-  ScanFeedback({required this.type, required this.message, this.student, this.extraInfo});
-}
-
-class ExamController extends ChangeNotifier {
-  Map<String, Student> _studentsMap = {};
-  Map<String, AttendanceRecord> _attendanceMap = {};
-  List<String> _scanHistoryStack = [];
-
-  Student? lastScannedStudent;
-  String? lastScanTime;
-  File? originalFile;
-  int codeColIdx = 0;
-
-  int get totalAttended => _attendanceMap.values.where((r) => !r.isRevoked).length;
-  bool get hasData => _studentsMap.isNotEmpty;
-
-  void setStudents(List<Student> students, File file, int codeIdx) {
-    _studentsMap = {for (var s in students) s.code: s};
-    originalFile = file;
-    codeColIdx = codeIdx;
-    notifyListeners();
-  }
-
-  ScanFeedback processBarcode(String code) {
-    String cleanCode = code.trim();
-
-    if (!_studentsMap.containsKey(cleanCode)) {
-      return ScanFeedback(
-        type: ScanResultType.notFound,
-        message: "الكود غير موجود بملف الطلاب",
-        extraInfo: "الكود: $cleanCode",
-      );
-    }
-
-    Student student = _studentsMap[cleanCode]!;
-
-    if (_attendanceMap.containsKey(cleanCode) && !_attendanceMap[cleanCode]!.isRevoked) {
-      var existingRecord = _attendanceMap[cleanCode]!;
-      return ScanFeedback(
-        type: ScanResultType.duplicate,
-        message: "تم تسجيل الحضور سابقاً",
-        student: student,
-        extraInfo: "وقت التسجيل الأول: ${existingRecord.timestamp}",
-      );
-    }
-
-    String currentTime = DateFormat('HH:mm:ss').format(DateTime.now());
-    _attendanceMap[cleanCode] = AttendanceRecord(studentCode: cleanCode, timestamp: currentTime);
-    _scanHistoryStack.add(cleanCode);
-
-    lastScannedStudent = student;
-    lastScanTime = currentTime;
-
-    notifyListeners();
-
-    return ScanFeedback(
-      type: ScanResultType.success,
-      message: "تم تسجيل الحضور بنجاح",
-      student: student,
-      extraInfo: currentTime,
+  Future<void> importStudentsFromExcel() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['xlsx', 'xls'],
     );
-  }
 
-  bool undoLastScan() {
-    if (_scanHistoryStack.isEmpty) return false;
-    String lastCode = _scanHistoryStack.removeLast();
-    if (_attendanceMap.containsKey(lastCode)) {
-      _attendanceMap[lastCode]!.isRevoked = true;
-      if (_scanHistoryStack.isNotEmpty) {
-        String prevCode = _scanHistoryStack.last;
-        lastScannedStudent = _studentsMap[prevCode];
-        lastScanTime = _attendanceMap[prevCode]?.timestamp;
-      } else {
-        lastScannedStudent = null;
-        lastScanTime = null;
+    if (result != null && result.files.single.path != null) {
+      var bytes = File(result.files.single.path!).readAsBytesSync();
+      var excel = excel_lib.Excel.decodeBytes(bytes);
+
+      _students.clear();
+      for (var table in excel.tables.keys) {
+        var rows = excel.tables[table]?.rows;
+        if (rows == null) continue;
+
+        for (int i = 1; i < rows.length; i++) {
+          var row = rows[i];
+          if (row.length >= 4) {
+            String code = row[0]?.value?.toString().trim() ?? '';
+            String name = row[1]?.value?.toString().trim() ?? '';
+            String grade = row[2]?.value?.toString().trim() ?? '';
+            String group = row[3]?.value?.toString().trim() ?? '';
+
+            if (code.isNotEmpty) {
+              _students.add(Student(
+                code: code,
+                name: name,
+                grade: grade,
+                group: group,
+              ));
+            }
+          }
+        }
       }
       notifyListeners();
+    }
+  }
+
+  bool markAttendance(String code) {
+    int index = _students.indexWhere((s) => s.code == code);
+    if (index != -1 && !_students[index].isPresent) {
+      _students[index].isPresent = true;
+      _students[index].attendanceTime = DateFormat('hh:mm:ss a').format(DateTime.now());
+      notifyListeners();
+      Vibration.vibrate(duration: 100);
       return true;
     }
     return false;
   }
 
-  Future<String?> exportExcel() async {
-    if (originalFile == null) return null;
-    var bytes = originalFile!.readAsBytesSync();
-    var excel = Excel.decodeBytes(bytes);
-    String sheetName = excel.tables.keys.first;
-    var sheet = excel.tables[sheetName];
-    if (sheet == null) return null;
-
-    int attendanceColIdx = sheet.maxColumns;
-    var headerRow = sheet.rows.first;
-    for (int col = 0; col < headerRow.length; col++) {
-      if (headerRow[col]?.value?.toString().trim() == "وقت الحضور") {
-        attendanceColIdx = col;
-        break;
-      }
+  Future<void> exportToExcel(BuildContext context) async {
+    if (_students.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا توجد بيانات طلاب لتصديرها!')),
+      );
+      return;
     }
 
-    if (attendanceColIdx == sheet.maxColumns) {
-      sheet.cell(CellIndex.indexByColumnRow(columnIndex: attendanceColIdx, rowIndex: 0)).value = TextCellValue("وقت الحضور");
+    var excel = excel_lib.Excel.createExcel();
+    excel_lib.Sheet sheetObject = excel['الحضور'];
+    excel.delete('Sheet1');
+
+    sheetObject.appendRow([
+      excel_lib.TextCellValue('كود الطالب'),
+      excel_lib.TextCellValue('اسم الطالب'),
+      excel_lib.TextCellValue('الصف الدراسي'),
+      excel_lib.TextCellValue('المجموعة'),
+      excel_lib.TextCellValue('حالة الحضور'),
+      excel_lib.TextCellValue('وقت الحضور'),
+    ]);
+
+    for (var student in _students) {
+      sheetObject.appendRow([
+        excel_lib.TextCellValue(student.code),
+        excel_lib.TextCellValue(student.name),
+        excel_lib.TextCellValue(student.grade),
+        excel_lib.TextCellValue(student.group),
+        excel_lib.TextCellValue(student.isPresent ? 'حاضر' : 'غائب'),
+        excel_lib.TextCellValue(student.attendanceTime ?? '-'),
+      ]);
     }
 
-    for (int rowIdx = 1; rowIdx < sheet.rows.length; rowIdx++) {
-      var row = sheet.rows[rowIdx];
-      if (row.length <= codeColIdx) continue;
-      String studentCode = row[codeColIdx]?.value?.toString().trim() ?? '';
-      if (_attendanceMap.containsKey(studentCode) && !_attendanceMap[studentCode]!.isRevoked) {
-        sheet.cell(CellIndex.indexByColumnRow(columnIndex: attendanceColIdx, rowIndex: rowIdx)).value = TextCellValue(_attendanceMap[studentCode]!.timestamp);
-      }
-    }
-
-    String outputPath = "${originalFile!.parent.path}/حضور_الطلاب_${DateFormat('yyyy-MM-dd_HH-mm').format(DateTime.now())}.xlsx";
     var fileBytes = excel.save();
     if (fileBytes != null) {
-      File(outputPath).writeAsBytesSync(fileBytes);
-      return outputPath;
+      final fileName = "حضور_الطلاب_${DateFormat('yyyy-MM-dd_HH-mm').format(DateTime.now())}.xlsx";
+
+      // 1. تحديد مجلد Downloads أو المجلد العام
+      Directory? downloadsDir;
+      if (Platform.isAndroid) {
+        downloadsDir = Directory('/storage/emulated/0/Download');
+        if (!downloadsDir.existsSync()) {
+          downloadsDir = await getExternalStorageDirectory();
+        }
+      } else {
+        downloadsDir = await getApplicationDocumentsDirectory();
+      }
+
+      final filePath = "${downloadsDir?.path}/$fileName";
+      final file = File(filePath);
+      await file.writeAsBytes(fileBytes);
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تم حفظ الملف في مجلد التحميلات:\n$fileName'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+
+      // 2. فتح نافذة المشاركة المباشرة (الواتساب / الملفات)
+      await Share.shareXFiles(
+        [XFile(filePath)],
+        text: 'تقرير حضور الطلاب - $fileName',
+      );
     }
-    return null;
+  }
+}
+
+class ExamAttendanceApp extends StatelessWidget {
+  const ExamAttendanceApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'نظام حضور الامتحانات',
+      debugShowCheckedModeBanner: false,
+      locale: const Locale('ar', 'EG'),
+      supportedLocales: const [Locale('ar', 'EG')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      theme: ThemeData(
+        primarySwatch: Colors.indigo,
+        fontFamily: 'Roboto',
+      ),
+      home: const HomeScreen(),
+    );
   }
 }
 
 class HomeScreen extends StatelessWidget {
-  const HomeScreen({Key? key}) : super(key: key);
+  const HomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final controller = Provider.of<ExamController>(context);
+    final provider = Provider.of<AttendanceProvider>(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text("نظام حضور الامتحانات")),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              ElevatedButton.icon(
-                icon: const Icon(Icons.file_upload),
-                label: const Text("استيراد ملف Excel الطلاب"),
-                style: ElevatedButton.styleFrom(padding: const EdgeInsets.all(16)),
-                onPressed: () async {
-                  FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['xlsx', 'xls']);
-                  if (result != null && result.files.single.path != null) {
-                    File file = File(result.files.single.path!);
-                    var bytes = file.readAsBytesSync();
-                    var excel = Excel.decodeBytes(bytes);
-                    var sheet = excel.tables[excel.tables.keys.first];
-                    if (sheet != null && sheet.rows.length > 1) {
-                      List<Student> students = [];
-                      for (int i = 1; i < sheet.rows.length; i++) {
-                        var r = sheet.rows[i];
-                        if (r.isNotEmpty) {
-                          students.add(Student(
-                            code: r[0]?.value?.toString().trim() ?? '',
-                            name: r.length > 1 ? r[1]?.value?.toString().trim() ?? '' : '',
-                            grade: r.length > 2 ? r[2]?.value?.toString().trim() ?? '' : '',
-                            group: r.length > 3 ? r[3]?.value?.toString().trim() ?? '' : '',
-                          ));
-                        }
-                      }
-                      controller.setStudents(students, file, 0);
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("تم استيراد الطلاب بنجاح")));
-                    }
-                  }
+      appBar: AppBar(
+        title: const Text('نظام حضور الامتحانات'),
+        centerTitle: true,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            Card(
+              elevation: 2,
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    Column(
+                      children: [
+                        const Text('إجمالي الطلاب', style: TextStyle(fontSize: 16)),
+                        Text('${provider.totalCount}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.indigo)),
+                      ],
+                    ),
+                    Column(
+                      children: [
+                        const Text('تم حضورهم', style: TextStyle(fontSize: 16)),
+                        Text('${provider.presentCount}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.green)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 30),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 50),
+                backgroundColor: Colors.indigo.shade100,
+                foregroundColor: Colors.indigo.shade900,
+              ),
+              onPressed: () => provider.importStudentsFromExcel(),
+              icon: const Icon(Icons.file_upload),
+              label: const Text('استيراد ملف Excel الطلاب', style: TextStyle(fontSize: 18)),
+            ),
+            const SizedBox(height: 15),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 50),
+                backgroundColor: Colors.green.shade600,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: provider.totalCount == 0
+                  ? null
+                  : () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const ScannerScreen()),
+                      );
+                    },
+              icon: const Icon(Icons.camera_alt),
+              label: const Text('بدء مسح الحضور (الكاميرا)', style: TextStyle(fontSize: 18)),
+            ),
+            const SizedBox(height: 15),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 50),
+                backgroundColor: Colors.orange.shade700,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () => provider.exportToExcel(context),
+              icon: const Icon(Icons.file_download),
+              label: const Text('تصدير ملف Excel النهائي', style: TextStyle(fontSize: 18)),
+            ),
+            const SizedBox(height: 20),
+            Expanded(
+              child: ListView.builder(
+                itemCount: provider.students.length,
+                itemBuilder: (context, index) {
+                  final student = provider.students[index];
+                  return ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: student.isPresent ? Colors.green : Colors.grey.shade300,
+                      child: Icon(
+                        student.isPresent ? Icons.check : Icons.person,
+                        color: student.isPresent ? Colors.white : Colors.grey,
+                      ),
+                    ),
+                    title: Text(student.name),
+                    subtitle: Text('${student.code} | ${student.grade} - ${student.group}'),
+                    trailing: Text(
+                      student.isPresent ? (student.attendanceTime ?? '') : 'غائب',
+                      style: TextStyle(
+                        color: student.isPresent ? Colors.green : Colors.red,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  );
                 },
               ),
-              const SizedBox(height: 20),
-              if (controller.hasData) ...[
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.camera_alt),
-                  label: const Text("بدء مسح الحضور (الكاميرا)"),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green, padding: const EdgeInsets.all(16)),
-                  onPressed: () {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const ScannerScreen()));
-                  },
-                ),
-                const SizedBox(height: 20),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.download),
-                  label: const Text("تصدير ملف Excel النهائي"),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, padding: const EdgeInsets.all(16)),
-                  onPressed: () async {
-                    String? path = await controller.exportExcel();
-                    if (path != null) {
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("تم التصدير بنجاح: $path")));
-                    }
-                  },
-                ),
-              ]
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -243,134 +302,52 @@ class HomeScreen extends StatelessWidget {
 }
 
 class ScannerScreen extends StatefulWidget {
-  const ScannerScreen({Key? key}) : super(key: key);
+  const ScannerScreen({super.key});
 
   @override
   State<ScannerScreen> createState() => _ScannerScreenState();
 }
 
 class _ScannerScreenState extends State<ScannerScreen> {
-  final MobileScannerController _cameraController = MobileScannerController(detectionSpeed: DetectionSpeed.noDuplicates);
   bool _isProcessing = false;
-  Color _overlayColor = Colors.transparent;
-  String _statusMessage = "";
-
-  void _onBarcodeDetected(BarcodeCapture capture) async {
-    if (_isProcessing) return;
-    final List<Barcode> barcodes = capture.barcodes;
-    if (barcodes.isEmpty) return;
-    final String? code = barcodes.first.rawValue;
-    if (code == null || code.trim().isEmpty) return;
-
-    setState(() => _isProcessing = true);
-    final controller = Provider.of<ExamController>(context, listen: false);
-    ScanFeedback feedback = controller.processBarcode(code);
-
-    switch (feedback.type) {
-      case ScanResultType.success:
-        _overlayColor = Colors.green.withOpacity(0.4);
-        _statusMessage = "تم: ${feedback.student?.name}";
-        Vibration.vibrate(duration: 80);
-        break;
-      case ScanResultType.duplicate:
-        _overlayColor = Colors.orange.withOpacity(0.5);
-        _statusMessage = "${feedback.message}\n${feedback.extraInfo}";
-        Vibration.vibrate(pattern: [0, 100, 50, 100]);
-        break;
-      case ScanResultType.notFound:
-        _overlayColor = Colors.red.withOpacity(0.5);
-        _statusMessage = "${feedback.message}\n${feedback.extraInfo}";
-        Vibration.vibrate(duration: 300);
-        break;
-    }
-    setState(() {});
-
-    await Future.delayed(const Duration(milliseconds: 600));
-    if (mounted) {
-      setState(() {
-        _isProcessing = false;
-        _overlayColor = Colors.transparent;
-        _statusMessage = "";
-      });
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
-    final controller = Provider.of<ExamController>(context);
+    final provider = Provider.of<AttendanceProvider>(context, listen: false);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("مسح باركود الطلاب"),
-        actions: [
-          IconButton(icon: const Icon(Icons.flash_on), onPressed: () => _cameraController.toggleTorch()),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            flex: 5,
-            child: Stack(
-              children: [
-                MobileScanner(controller: _cameraController, onDetect: _onBarcodeDetected),
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  color: _overlayColor,
-                  child: Center(
-                    child: _statusMessage.isNotEmpty
-                        ? Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(8)),
-                            child: Text(_statusMessage, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white, fontSize: 16)),
-                          )
-                        : null,
+      appBar: AppBar(title: const Text('مسح الباركود')),
+      body: MobileScanner(
+        onDetect: (capture) {
+          if (_isProcessing) return;
+
+          final List<Barcode> barcodes = capture.barcodes;
+          for (final barcode in barcodes) {
+            final String? rawCode = barcode.rawValue;
+            if (rawCode != null && rawCode.isNotEmpty) {
+              setState(() => _isProcessing = true);
+
+              bool success = provider.markAttendance(rawCode.trim());
+
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    success ? 'تم تسجيل حضور الطالب: $rawCode' : 'الكود غير موجود أو تم تسجيله سابقاً!',
                   ),
+                  backgroundColor: success ? Colors.green : Colors.red,
+                  duration: const Duration(seconds: 1),
                 ),
-              ],
-            ),
-          ),
-          Expanded(
-            flex: 4,
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              color: Colors.grey[100],
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text("آخر طالب تم تسجيله:", style: TextStyle(fontSize: 12, color: Colors.grey)),
-                        Text(controller.lastScannedStudent?.name ?? "في انتظار المسح...", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blueAccent)),
-                        if (controller.lastScannedStudent != null) ...[
-                          Text("${controller.lastScannedStudent!.grade} — ${controller.lastScannedStudent!.group}"),
-                          Text("الوقت: ${controller.lastScanTime}", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-                        ]
-                      ],
-                    ),
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text("إجمالي الحضور:", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                      Chip(label: Text("${controller.totalAttended}", style: const TextStyle(color: Colors.white)), backgroundColor: Colors.blue),
-                    ],
-                  ),
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                    icon: const Icon(Icons.undo, color: Colors.white),
-                    label: const Text("تراجع عن آخر Scan", style: TextStyle(color: Colors.white)),
-                    onPressed: () => controller.undoLastScan(),
-                  )
-                ],
-              ),
-            ),
-          ),
-        ],
+              );
+
+              Future.delayed(const Duration(milliseconds: 1500), () {
+                if (mounted) {
+                  setState(() => _isProcessing = false);
+                }
+              });
+              break;
+            }
+          }
+        },
       ),
     );
   }
