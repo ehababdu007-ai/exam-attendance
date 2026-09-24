@@ -29,6 +29,7 @@ jobs:
           mkdir temp_app
           cd temp_app
           flutter create . --org com.exam.attendance
+          sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
           cp -r ../lib .
           cp ../pubspec.yaml .
           flutter pub get
