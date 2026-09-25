@@ -336,7 +336,7 @@ class HomeScreen extends StatelessWidget {
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.horizontal(12.0),
+                  padding: const EdgeInsets.symmetric(horizontal: 12.0),
                   child: SizedBox(
                     width: double.infinity,
                     height: 50,
@@ -397,7 +397,7 @@ class ScannerScreen extends StatefulWidget {
   State<ScannerScreen> createState() => _ScannerScreenState();
 }
 
-class ScannerScreenState extends State<ScannerScreen> {
+class _ScannerScreenState extends State<ScannerScreen> {
   bool isProcessing = false;
 
   void _onDetect(BarcodeCapture capture, AttendanceProvider provider) async {
