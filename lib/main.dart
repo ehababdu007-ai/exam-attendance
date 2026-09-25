@@ -1,4 +1,4 @@
-import 'dartd:convert';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -90,11 +90,9 @@ class AttendanceProvider extends ChangeNotifier {
     _isLoading = true;
     notifyListeners();
     
-    // 1. أولاً قراءة كل ما تم حفظه سابقاً محلياً لحمايته
     await recoverLocalData();
-
-    // 2. محاولة دمج شيت جوجل مع الحضور المحلي
     await fetchStudentsFromSheet();
+    
     _isLoading = false;
     notifyListeners();
   }
@@ -108,7 +106,6 @@ class AttendanceProvider extends ChangeNotifier {
         List<dynamic> decoded = jsonDecode(cachedData);
         List<Student> localList = decoded.map((item) => Student.fromJson(item)).toList();
         
-        // دمج البيانات المحفوظة
         for (var localStudent in localList) {
           int index = _students.indexWhere((s) => s.code == localStudent.code);
           if (index != -1) {
@@ -136,7 +133,6 @@ class AttendanceProvider extends ChangeNotifier {
 
         List<Student> newStudents = data.map((item) {
           String code = item['code'].toString();
-          // احتفاظ أولوية للطلاب الحاضرين محلياً
           if (currentMap.containsKey(code) && currentMap[code]!.isPresent) {
             return currentMap[code]!;
           }
