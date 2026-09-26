@@ -33,6 +33,7 @@ jobs:
           sed -i 's/android:label="exam_attendance"/android:label="حضور الامتحانات"/' android/app/src/main/AndroidManifest.xml
           cp -r ../lib .
           cp ../pubspec.yaml .
+          sed -i 's/intl: .*/intl: any/' pubspec.yaml
           flutter pub get
           flutter build apk --release
           cp build/app/outputs/flutter-apk/app-release.apk ../exam-attendance.apk
