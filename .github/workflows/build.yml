@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
@@ -12,33 +12,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Java JDK
-        uses: actions/setup-java@v4
+      - name: Set up Java
+        uses: actions/setup-java@v3
         with:
+          distribution: 'zulu'
           java-version: '17'
-          distribution: 'temurin'
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.x'
+          flutter-version: '3.24.0'
           channel: 'stable'
 
-      - name: Recreate Clean Android Structure
-        run: |
-          flutter create exam_attendance --org com.exam.attendance --project-name exam_attendance
-          cd exam_attendance
-          sed -i 's/minSdkVersion .*/minSdkVersion 21/' android/app/build.gradle
-          sed -i 's/targetSdkVersion .*/targetSdkVersion 34/' android/app/build.gradle
-          sed -i 's/android:label="exam_attendance"/android:label="حضور الامتحانات"/' android/app/src/main/AndroidManifest.xml
-          cp -r ../lib .
-          cp ../pubspec.yaml .
-          flutter pub get
-          flutter build apk --release
-          cp build/app/outputs/flutter-apk/app-release.apk ../exam-attendance.apk
+      - name: Install Dependencies
+        run: flutter pub get
+
+      - name: Build APK
+        run: flutter build apk --release
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: exam-attendance-app
-          path: exam-attendance.apk
+          name: app-release
+          path: build/app/outputs/flutter-apk/app-release.apk
