@@ -25,7 +25,7 @@ jobs:
           channel: 'stable'
 
       - name: Recreate Android Project Platform
-        run: flutter create . --platforms=android
+        run: flutter create . --project-name=exam_attendance --platforms=android
 
       - name: Install Dependencies
         run: flutter pub get
